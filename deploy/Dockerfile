@@ -3,7 +3,7 @@
 FROM n8nio/n8n:1.123.84
 
 COPY --chown=node:node workflows /opt/omulimu/workflows
-COPY --chown=node:node deploy/entrypoint.sh deploy/pick-db-host.js deploy/write-credentials.js /opt/omulimu/
+COPY --chown=node:node deploy/*.sh deploy/*.js /opt/omulimu/
 
 ENV GENERIC_TIMEZONE=Africa/Kampala \
     TZ=Africa/Kampala \
@@ -12,6 +12,8 @@ ENV GENERIC_TIMEZONE=Africa/Kampala \
     N8N_PROXY_HOPS=1 \
     N8N_BLOCK_ENV_ACCESS_IN_NODE=false \
     N8N_RUNNERS_ENABLED=true \
+    DB_POSTGRESDB_POOL_SIZE=3 \
+    DB_POSTGRESDB_CONNECTION_TIMEOUT=30000 \
     N8N_DIAGNOSTICS_ENABLED=false \
     N8N_PERSONALIZATION_ENABLED=false \
     N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=true \
