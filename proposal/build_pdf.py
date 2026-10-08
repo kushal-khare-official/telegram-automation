@@ -35,15 +35,11 @@ def table(rows, widths, header=True):
 W = A4[0] - 36 * mm
 story = [
     P("Omulimu: Telegram coaching bot in n8n", h1),
-    P("Test project proposal &nbsp;·&nbsp; Kushal Khare, Backend &amp; AI Automation &nbsp;·&nbsp; $60 fixed, 48 hours", sub),
+    P("Test project proposal &nbsp;·&nbsp; $60 fixed, 48 hours", sub),
     Spacer(1, 8),
 
-    P("1. Try it now", h2),
+    P("1. What to try on the live bot", h2),
     table([
-        ["Telegram bot", '<link href="https://t.me/kushal_coaching_bot" color="#0f766e">t.me/kushal_coaching_bot</link>'],
-        ["n8n editor", '<link href="https://omulimu-n8n.onrender.com/" color="#0f766e">omulimu-n8n.onrender.com</link>'
-                       '&nbsp;&nbsp;·&nbsp;&nbsp;Email <font name="Courier">admin@test.com</font>'
-                       '&nbsp;&nbsp;·&nbsp;&nbsp;Password <font name="Courier">Password@123</font>'],
         ["Messages to try", '"sold 120k, spent 40k" &nbsp;·&nbsp; "how do I price my chapati?" &nbsp;·&nbsp; '
                             '"I feel so stressed" &nbsp;·&nbsp; <font name="Courier">/help</font> &nbsp;·&nbsp; a sticker'],
     ], [32 * mm, W - 32 * mm], header=False),
@@ -104,5 +100,5 @@ story += [KeepTogether(cost)] + rest
 
 SimpleDocTemplate(str(OUT), pagesize=A4, leftMargin=18 * mm, rightMargin=18 * mm,
                   topMargin=16 * mm, bottomMargin=16 * mm,
-                  title="Omulimu: Telegram coaching bot in n8n", author="Kushal Khare").build(story)
+                  title="Omulimu: Telegram coaching bot in n8n").build(story)
 print(OUT)
