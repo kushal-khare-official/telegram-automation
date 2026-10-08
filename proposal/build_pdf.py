@@ -98,8 +98,6 @@ rest = [
       "&#8226; <b>schema.sql</b> for an empty Postgres, and <b>prompts.md</b> with the classifier prompt, Coach prompt and every reply template<br/>"
       "&#8226; A README with setup steps, how to add a fifth intent, known limits, and open questions for you<br/>"
       "&#8226; Test results for your acceptance tests, plus SQL checks you can run yourself", body),
-    Spacer(1, 10),
-    P("Kushal Khare &nbsp;·&nbsp; github.com/kushal-khare-official &nbsp;·&nbsp; 1st place, Paysafe AI Hackathon 2024", note),
 ]
 
 story += [KeepTogether(cost)] + rest
