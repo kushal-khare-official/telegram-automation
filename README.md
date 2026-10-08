@@ -33,17 +33,28 @@ The exported workflows contain no secrets. The bot token, the LLM key and the da
 
 ## Hosting: Render + Supabase (what the live bot uses)
 
-n8n runs as one always-on Docker web service on Render (Starter plan; the free plan sleeps and would miss Telegram updates). Everything n8n stores lives in Supabase, in its own `n8n` schema: workflows, encrypted credentials, the owner account and execution history. The bot's 6 tables live in an `omulimu` schema. Neither schema is exposed through Supabase's public Data API, and both are reached through a dedicated `omulimu_app` role. So a restart or redeploy loses nothing, and no paid disk is needed.
+n8n runs as one always-on Docker web service on Render: the Standard plan (1 CPU, 2 GB) in **Frankfurt**, next to a Supabase project in **Frankfurt** (`eu-central-1`). Everything n8n stores lives in Supabase, in its own `n8n` schema: workflows, encrypted credentials, the owner account and execution history. The bot's 6 tables live in an `omulimu` schema. Neither schema is exposed through Supabase's public Data API, and both are reached through a dedicated `omulimu_app` role. So a restart or redeploy loses nothing, and no paid disk is needed.
 
 On every boot, `deploy/entrypoint.sh`:
 1. picks the Supabase pooler host that accepts the login (`aws-0` or `aws-1`, depending on the project);
-2. imports the 3 credentials, built from env vars, so nothing secret is in the image or the repo;
+2. imports the 4 credentials, built from env vars, so nothing secret is in the image or the repo;
 3. re-imports the 7 workflows (the fixed IDs mean they overwrite in place);
 4. activates the router and the Numbers brain, and starts n8n. Activation registers the Telegram webhook at Render's public URL.
 
 Steps 2–4 each boot the n8n CLI, which takes about 40 s on a small instance. So the script stores a hash of the workflows and credentials in `n8n.omulimu_boot_state`, and a restart with nothing changed goes straight to `n8n start`. Two consequences:
 - If you deactivate a workflow in the UI, a plain restart won't reactivate it. Run `DELETE FROM n8n.omulimu_boot_state;` and restart to force a full re-import.
-- **Use the Starter plan, not the free one.** The free plan gets about 0.1 CPU. n8n runs Code nodes in a separate task-runner process, and that runner must accept each job within a 5-second window that is hard-coded in n8n. On the free plan it often misses that window, so the Code nodes fail and messages get no reply. Turning the runner off isn't a fix either: in n8n 1.123 that breaks the workflows' expressions, which the local suite caught.
+- **Don't use the free plan.** It gets about 0.1 CPU. n8n runs Code nodes in a separate task-runner process, and that runner must accept each job within a 5-second window that is hard-coded in n8n. On the free plan it often misses that window, so the Code nodes fail and messages get no reply. Turning the runner off isn't a fix either: in n8n 1.123 that breaks the workflows' expressions, which the local suite caught.
+
+**Why Frankfurt.** Neither Render nor Supabase has an Africa region. Frankfurt is the closest well-connected hub to Kampala, and putting the app and the database in the same city matters most: each message makes dozens of database round trips (the bot's own queries plus n8n saving executions).
+
+Measured on the same live tests:
+
+| Setup | Duplicate sticker → reply row written (no LLM) |
+|---|---|
+| Render free (Singapore) + Supabase (Sydney) | 9–12 s |
+| Render Standard (Frankfurt) + Supabase (Frankfurt) | 0.35 s |
+
+On the old setup, text messages took 13–20 s from the inbound row to the reply row, of which the LLM was only 1.4–4.9 s.
 
 **Deploy steps (8):**
 1. **Bot.** Get a bot token from @BotFather, and your chat id from @userinfobot.

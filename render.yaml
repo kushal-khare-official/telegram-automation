@@ -4,19 +4,19 @@
 # Secrets are `sync: false`: Render asks for them when the Blueprint is created.
 services:
   - type: web
-    name: omulimu-n8n
+    name: omulimu-n8n-fra
     runtime: docker
     dockerfilePath: ./deploy/Dockerfile
     dockerContext: .
-    plan: starter            # the free plan sleeps after 15 min idle and would miss Telegram updates
-    region: singapore        # closest Render region to the Supabase project (ap-southeast-2)
+    plan: standard           # 1 CPU / 2 GB: n8n + its task runner; free sleeps and starves the runner
+    region: frankfurt        # same city as the Supabase project (eu-central-1); closest well-connected hub to Kampala
     healthCheckPath: /healthz
     autoDeploy: true
     envVars:
       - key: SUPABASE_PROJECT_REF
         sync: false
       - key: SUPABASE_REGION
-        value: ap-southeast-2
+        value: eu-central-1
       - key: DB_PASSWORD          # password of the omulimu_app role
         sync: false
       - key: N8N_ENCRYPTION_KEY   # keep it stable: n8n encrypts stored credentials with it

@@ -3,7 +3,7 @@
 // "Tenant or user not found", so we try each and keep the one that works.
 const { Client } = require('./pg-client');
 
-const region = process.env.SUPABASE_REGION || 'ap-southeast-2';
+const region = process.env.SUPABASE_REGION || 'eu-central-1';
 const candidates = (process.env.DB_HOST_CANDIDATES || `aws-1-${region}.pooler.supabase.com,aws-0-${region}.pooler.supabase.com`)
   .split(',').map((s) => s.trim()).filter(Boolean);
 
