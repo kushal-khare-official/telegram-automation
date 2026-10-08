@@ -1,24 +1,8 @@
 // Prints the first Supabase pooler host that accepts the Omulimu role's login.
 // Supabase projects live on either aws-0-<region> or aws-1-<region>; a wrong one answers
 // "Tenant or user not found", so we try each and keep the one that works.
-const path = require('path');
-const fs = require('fs');
+const { Client } = require('./pg-client');
 
-function loadPg() {
-  const roots = [
-    process.env.N8N_MODULES,
-    '/usr/local/lib/node_modules/n8n/node_modules',
-    '/usr/local/lib/node_modules/n8n/node_modules/@n8n/typeorm/node_modules',
-    path.join(__dirname, 'node_modules'),
-  ].filter(Boolean);
-  for (const r of roots) {
-    const p = path.join(r, 'pg');
-    if (fs.existsSync(path.join(p, 'package.json'))) return require(p);
-  }
-  return require('pg');
-}
-
-const { Client } = loadPg();
 const region = process.env.SUPABASE_REGION || 'ap-southeast-2';
 const candidates = (process.env.DB_HOST_CANDIDATES || `aws-1-${region}.pooler.supabase.com,aws-0-${region}.pooler.supabase.com`)
   .split(',').map((s) => s.trim()).filter(Boolean);

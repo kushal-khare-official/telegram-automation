@@ -41,6 +41,10 @@ On every boot, `deploy/entrypoint.sh`:
 3. re-imports the 7 workflows (the fixed IDs mean they overwrite in place);
 4. activates the router and the Numbers brain, and starts n8n. Activation registers the Telegram webhook at Render's public URL.
 
+Steps 2–4 each boot the n8n CLI, which takes about 40 s on a small instance. So the script stores a hash of the workflows and credentials in `n8n.omulimu_boot_state`, and a restart with nothing changed goes straight to `n8n start`. Two consequences:
+- If you deactivate a workflow in the UI, a plain restart won't reactivate it. Run `DELETE FROM n8n.omulimu_boot_state;` and restart to force a full re-import.
+- **Use the Starter plan, not the free one.** The free plan gets about 0.1 CPU. n8n runs Code nodes in a separate task-runner process, and that runner must accept each job within a 5-second window that is hard-coded in n8n. On the free plan it often misses that window, so the Code nodes fail and messages get no reply. Turning the runner off isn't a fix either: in n8n 1.123 that breaks the workflows' expressions, which the local suite caught.
+
 **Deploy steps (8):**
 1. **Bot.** Get a bot token from @BotFather, and your chat id from @userinfobot.
 2. **Database.** In Supabase, create the role and schemas, then run `schema.sql` as that role so the tables land in `omulimu`:

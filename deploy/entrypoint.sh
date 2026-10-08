@@ -40,17 +40,25 @@ if [ "${DB_SSL:-true}" = "true" ]; then
   export DB_POSTGRESDB_SSL_REJECT_UNAUTHORIZED=false
 fi
 
-# 2. Credentials, written to a private temp file and deleted right after import.
+# 2. Credentials, written to a private temp file and deleted right after use.
 CREDS=$(mktemp)
 trap 'rm -f "$CREDS"' EXIT
 ( umask 077; node "$APP_DIR/write-credentials.js" > "$CREDS" )
-n8n import:credentials --input="$CREDS"
-rm -f "$CREDS"
 
-# 3 + 4. Workflows, then activation.
-n8n import:workflow --separate --input="$APP_DIR/workflows"
-n8n update:workflow --id=omulimuRouter001 --active=true
-n8n update:workflow --id=omulimuNumbers01 --active=true
+# Each n8n CLI command boots n8n (~40 s on a small instance), so skip the import when the
+# workflows and credentials are exactly what the last successful boot imported.
+HASH=$(cat "$CREDS" "$APP_DIR"/workflows/*.json | sha256sum | cut -d' ' -f1)
+if node "$APP_DIR/boot-state.js" check "$HASH"; then
+  log "workflows and credentials unchanged since last boot; skipping import"
+else
+  # 3 + 4. Credentials, workflows, then activation.
+  n8n import:credentials --input="$CREDS"
+  n8n import:workflow --separate --input="$APP_DIR/workflows"
+  n8n update:workflow --id=omulimuRouter001 --active=true
+  n8n update:workflow --id=omulimuNumbers01 --active=true
+  node "$APP_DIR/boot-state.js" save "$HASH"
+fi
+rm -f "$CREDS"
 
 log "starting n8n (webhook base: ${WEBHOOK_URL:-unset})"
 exec n8n start
