@@ -24,13 +24,46 @@ Anything unhandled → Error Trigger workflow → admin chat
 | `schema.sql` | The 6 tables with their constraints; runs on an empty Postgres and is safe to re-run |
 | `prompts.md` | Classifier and Coach prompts, all templates, and one line per design choice |
 | `credentials/credentials.example.json` | Template for the 3 n8n credentials (exports carry only id + name) |
-| `docker-compose.yml`, `.env.example` | Self-hosted n8n 1.123.84 (+ optional Caddy for HTTPS) |
+| `render.yaml`, `deploy/` | Render deployment: Docker image + start-up script that imports and activates everything on boot |
+| `docker-compose.yml`, `.env.example` | Self-hosted n8n 1.123.84 on any VPS (+ optional Caddy for HTTPS) |
 | `src/` | Source of truth: Code-node logic (`src/lib`), workflow definitions, build + lint |
 | `tests/` | Unit tests, a local end-to-end suite (mock Telegram/LLM), live-test scripts, SQL checks |
 
 The exported workflows contain no secrets. The bot token, the LLM key and the database password are stored in n8n credentials or `.env`. `node src/build.js` fails if anything that looks like a token or key gets into an export.
 
-## Setup (10 steps)
+## Hosting: Render + Supabase (what the live bot uses)
+
+n8n runs as one always-on Docker web service on Render (Starter plan; the free plan sleeps and would miss Telegram updates). Everything n8n stores lives in Supabase, in its own `n8n` schema: workflows, encrypted credentials, the owner account and execution history. The bot's 6 tables live in an `omulimu` schema. Neither schema is exposed through Supabase's public Data API, and both are reached through a dedicated `omulimu_app` role. So a restart or redeploy loses nothing, and no paid disk is needed.
+
+On every boot, `deploy/entrypoint.sh`:
+1. picks the Supabase pooler host that accepts the login (`aws-0` or `aws-1`, depending on the project);
+2. imports the 3 credentials, built from env vars, so nothing secret is in the image or the repo;
+3. re-imports the 7 workflows (the fixed IDs mean they overwrite in place);
+4. activates the router and the Numbers brain, and starts n8n. Activation registers the Telegram webhook at Render's public URL.
+
+**Deploy steps (8):**
+1. **Bot.** Get a bot token from @BotFather, and your chat id from @userinfobot.
+2. **Database.** In Supabase, create the role and schemas, then run `schema.sql` as that role so the tables land in `omulimu`:
+   ```sql
+   CREATE ROLE omulimu_app LOGIN PASSWORD '<strong password>';
+   GRANT omulimu_app TO postgres;
+   GRANT CREATE ON DATABASE postgres TO omulimu_app;   -- n8n's migrations need it
+   CREATE SCHEMA omulimu AUTHORIZATION omulimu_app;
+   CREATE SCHEMA n8n AUTHORIZATION omulimu_app;
+   ALTER ROLE omulimu_app SET search_path = omulimu;
+   SET ROLE omulimu_app; SET search_path = omulimu;
+   -- then paste schema.sql (with your chat id in the seed row)
+   ```
+3. **Render.** New → Blueprint, then pick this repo. Render reads `render.yaml`.
+4. **Secrets.** Fill in the prompted values: `SUPABASE_PROJECT_REF`, `DB_PASSWORD`, `TELEGRAM_BOT_TOKEN`, `LLM_API_KEY` (OpenRouter), `ADMIN_CHAT_ID` and `SUPPORT_LINE`. `N8N_ENCRYPTION_KEY` is generated for you; never change it afterwards.
+5. **Deploy.** The first deploy takes about 3 minutes. The logs should show `database host: …` and `Activated workflow "Omulimu 01 · Router"`.
+6. **Owner account.** Open `https://<service>.onrender.com` and create the n8n owner account straight away. Until you do, anyone who opens the URL can claim it.
+7. **Smoke test.** Send `/help` to the bot: you should see the menu with 4 buttons.
+8. **Test.** Run the tests below, with `N8N_URL=https://<service>.onrender.com`.
+
+**Why not Vercel.** n8n needs a process that stays running: it holds the Telegram webhook registration, runs the 19:00 schedule, uses Wait nodes for Telegram's 429 retries, and keeps a database connection open. Vercel Functions only live for one request. A Vercel Sandbox is capped at a few hours per session, and its disk and URL are lost when it stops. The brief needs the bot live for 5 days.
+
+## Setup on any VPS with Docker (10 steps)
 
 1. **Bot.** Create the bot with @BotFather and copy its token. Message @userinfobot to get your own chat id; it is the admin chat and the test chat.
 2. **Database.** In a new Supabase project, open the SQL editor. In `schema.sql`, change the seed row at the bottom to your chat id and a business type, then run the file.

@@ -1,0 +1,35 @@
+# Render Blueprint: one always-on Docker web service running n8n with the Omulimu workflows.
+# n8n's own data (workflows, credentials, owner account, executions) lives in Supabase (schema "n8n"),
+# so restarts and redeploys lose nothing and no paid disk is needed. Bot tables live in schema "omulimu".
+# Secrets are `sync: false`: Render asks for them when the Blueprint is created.
+services:
+  - type: web
+    name: omulimu-n8n
+    runtime: docker
+    dockerfilePath: ./deploy/Dockerfile
+    dockerContext: .
+    plan: starter            # the free plan sleeps after 15 min idle and would miss Telegram updates
+    region: singapore        # closest Render region to the Supabase project (ap-southeast-2)
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      - key: SUPABASE_PROJECT_REF
+        sync: false
+      - key: SUPABASE_REGION
+        value: ap-southeast-2
+      - key: DB_PASSWORD          # password of the omulimu_app role
+        sync: false
+      - key: N8N_ENCRYPTION_KEY   # keep it stable: n8n encrypts stored credentials with it
+        generateValue: true
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: LLM_API_KEY          # OpenRouter key (sk-or-...)
+        sync: false
+      - key: LLM_MODEL
+        value: openai/gpt-4o-mini
+      - key: ADMIN_CHAT_ID
+        sync: false
+      - key: SUPPORT_LINE
+        sync: false
+      - key: FORCE_LLM_FAIL
+        value: "false"
