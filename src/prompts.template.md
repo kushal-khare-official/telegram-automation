@@ -5,7 +5,7 @@ The workflows use these prompts and templates. `node src/build.js` copies them f
 
 ## Design choices (one line each)
 
-- **One classifier call per message, temperature 0, JSON mode.** There is no keyword pre-check. Even `/help` and button taps are classified, so `routing_history` is complete.
+- **One classifier call per message.** By default it's the OpenAI Decisions API (typed answers with real probabilities) when an OpenAI key is set; otherwise a chat call at temperature 0 in JSON mode. Set `CLASSIFIER_MODE=chat` or `decisions` to force either one. There is no keyword pre-check. Even `/help` and button taps are classified, so `routing_history` is complete.
 - **Validation in code, not trust.** The route must be one of 4, the reason non-empty, confidence a number in [0, 1] and amounts whole UGX or null. Anything else gets exactly one repair call, then a Coach fallback with `status = 'fallback'`.
 - **Amounts are converted to UGX twice.** The prompt converts them, and `parseUgx` in the Code node converts again ("50k", "shs 45,000", "1.2m", "emitwalo ataano"). The database only ever sees integers.
 - **`amount_ugx` is a third entity** for a bare amount ("30k"). The Numbers brain gives it to whichever step it asked for, so the LLM never has to guess the label.
@@ -36,6 +36,19 @@ The user turn is built by `buildClassifierUserContent` in `src/lib/classifier.js
 ```text
 {{REPAIR_INSTRUCTION}}
 ```
+
+## 1b. Classifier on the OpenAI Decisions API (default when `OPENAI_API_KEY` is set)
+
+`POST https://api.openai.com/v1/decisions`, model `DECISIONS_MODEL` (default `gpt-6-luna`). The `input` is the same text the chat classifier gets: profile, open session, the last 15 `messages` rows, and the new message in `<user_message>`. The Decisions API returns typed answers rather than generated text, so one request asks four questions:
+
+{{DECISIONS}}
+
+**How the answers become the classification object** (`decisionsToClassification` in `src/lib/decisions.js`):
+- `route` is the `route` choice and `confidence` is its `confidence`. If `distress` has a probability of {{DISTRESS_THRESHOLD}} or more and the top choice isn't `wellbeing`, the route becomes `wellbeing`; the model's own distress estimate decides it.
+- The amounts are found by code in the message, in order ("120k", "shs 45,000", "1.2m", "emitwalo ataano"). The `amounts` choice says which is sales and which is expenses. Bare numbers under 500 with no unit ("2 customers") are not money.
+- `reason` is built from the answers, e.g. "Decisions API: daily_numbers (confidence 0.93); amounts read as sales then expenses." The API returns no free-text explanation; the full answers, with every probability, are kept in `routing_history.raw_output`.
+- The object then goes through the same `validateClassification` as the chat output. A refusal or a missing answer fails validation, triggers one repeat request (the repair), and then the Coach fallback with `status = 'fallback'`.
+- The Decisions API has no temperature setting. Injection attempts can't change the output format, because the answers are typed and the choices are fixed.
 
 ## 2. Coach system prompt
 

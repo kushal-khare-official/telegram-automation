@@ -25,6 +25,14 @@ const creds = [
     data: { name: 'Authorization', value: `Bearer ${env('LLM_API_KEY', 'missing-key')}` },
   },
   {
+    // OpenAI Decisions API classifier. Imported even without a key so the workflow reference
+    // resolves; the router only uses it when OPENAI_API_KEY is set (or CLASSIFIER_MODE=decisions).
+    id: 'omulimuOpenAiKy1',
+    name: 'Omulimu OpenAI key',
+    type: 'httpHeaderAuth',
+    data: { name: 'Authorization', value: `Bearer ${env('OPENAI_API_KEY', 'missing-key')}` },
+  },
+  {
     id: 'omulimuTelegram1',
     name: 'Omulimu Telegram bot',
     type: 'telegramApi',

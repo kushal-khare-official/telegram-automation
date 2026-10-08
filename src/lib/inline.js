@@ -4,7 +4,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const ORDER = ['ugx', 'classifier', 'route', 'numbers', 'reply', 'templates', 'prompts'];
+const ORDER = ['ugx', 'classifier', 'decisions', 'route', 'numbers', 'reply', 'templates', 'prompts'];
 const EXPORT_RE = /^module\.exports\s*=\s*\{([\s\S]*?)\};\s*$/m;
 
 function read(name) {

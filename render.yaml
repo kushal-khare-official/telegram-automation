@@ -27,6 +27,10 @@ services:
         sync: false
       - key: LLM_MODEL
         value: openai/gpt-4o-mini
+      - key: OPENAI_API_KEY       # optional: when set, the classifier uses OpenAI's Decisions API (gpt-6-luna)
+        sync: false
+      - key: CLASSIFIER_MODE      # optional override: decisions | chat
+        sync: false
       - key: ADMIN_CHAT_ID
         sync: false
       - key: SUPPORT_LINE

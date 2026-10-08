@@ -74,13 +74,23 @@ function lint(file, wf, text) {
   }
 }
 
+function decisionsDoc() {
+  const { DECISION_QUESTIONS } = require('./lib/inline').load(['ugx', 'classifier', 'decisions']);
+  return DECISION_QUESTIONS.map((q) => {
+    const opts = (q.choices || []).map((c) => `  - \`${c.value}\`: ${c.description}`).join('\n');
+    return `- **\`${q.name}\`** (${q.type}): ${q.instructions}${opts ? '\n' + opts : ''}`;
+  }).join('\n');
+}
+
 function buildPromptsMd() {
   const tpl = fs.readFileSync(path.join(__dirname, 'prompts.template.md'), 'utf8');
   return tpl
     .replace('{{CLASSIFIER_SYSTEM}}', () => prompts.CLASSIFIER_SYSTEM)
     .replace('{{REPAIR_INSTRUCTION}}', () => prompts.repairInstruction(['<validation errors>']))
     .replace('{{COACH_SYSTEM}}', () => prompts.COACH_SYSTEM)
-    .replace('{{TEMPLATES}}', () => require('./templates-doc')());
+    .replace('{{TEMPLATES}}', () => require('./templates-doc')())
+    .replace('{{DECISIONS}}', () => decisionsDoc())
+    .replace('{{DISTRESS_THRESHOLD}}', () => String(require('./lib/inline').load(['ugx', 'classifier', 'decisions']).DISTRESS_THRESHOLD));
 }
 
 const outputs = [];

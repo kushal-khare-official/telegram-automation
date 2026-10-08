@@ -59,7 +59,7 @@ Steps 2–4 each boot the n8n CLI, which takes about 40 s on a small instance. S
    -- then paste schema.sql (with your chat id in the seed row)
    ```
 3. **Render.** New → Blueprint, then pick this repo. Render reads `render.yaml`.
-4. **Secrets.** Fill in the prompted values: `SUPABASE_PROJECT_REF`, `DB_PASSWORD`, `TELEGRAM_BOT_TOKEN`, `LLM_API_KEY` (OpenRouter), `ADMIN_CHAT_ID` and `SUPPORT_LINE`. `N8N_ENCRYPTION_KEY` is generated for you; never change it afterwards.
+4. **Secrets.** Fill in the prompted values: `SUPABASE_PROJECT_REF`, `DB_PASSWORD`, `TELEGRAM_BOT_TOKEN`, `LLM_API_KEY` (OpenRouter), `ADMIN_CHAT_ID` and `SUPPORT_LINE`. `OPENAI_API_KEY` is optional: set it to classify with OpenAI's Decisions API (see *Classifier* below). `N8N_ENCRYPTION_KEY` is generated for you; never change it afterwards.
 5. **Deploy.** The first deploy takes about 3 minutes. The logs should show `database host: …` and `Activated workflow "Omulimu 01 · Router"`.
 6. **Owner account.** Open `https://<service>.onrender.com` and create the n8n owner account straight away. Until you do, anyone who opens the URL can claim it.
 7. **Smoke test.** Send `/help` to the bot: you should see the menu with 4 buttons.
@@ -94,7 +94,7 @@ Steps 2–4 each boot the n8n CLI, which takes about 40 s on a small instance. S
 
 ## Testing
 
-**Unit tests and build check** (no services needed): `npm test`. This runs 18 tests on the Code-node logic and checks that `workflows/*.json` and `prompts.md` match `src/`.
+**Unit tests and build check** (no services needed): `npm test`. This runs 24 tests on the Code-node logic and checks that `workflows/*.json` and `prompts.md` match `src/`.
 
 **Local end-to-end suite** (real n8n and real Postgres, with Telegram and the LLM mocked): `npm run e2e:local`. It needs a local stack; `tests/e2e/README.md` shows how to start it. It covers T1–T14 plus repair and fallback, a 429 from Telegram, the 60-word cut, Coach LLM failure, buttons, `/undo`, the Care session and the nudge query. **All 55 checks pass on n8n 1.123.84 with Postgres 16.**
 
@@ -111,6 +111,25 @@ Steps 2–4 each boot the n8n CLI, which takes about 40 s on a small instance. S
 
 The script computes the `X-Telegram-Bot-Api-Secret-Token` header that the Telegram Trigger requires. n8n builds it as `<workflow id>_<trigger node id>`, which for this export is `omulimuRouter001_b669f61d-32bf-4cfe-a868-f7e296529775`. The webhook path is `/webhook/17146771-b6a5-460a-ac6d-a4b5cf18af82/webhook`. Posting without that header returns 403.
 
+## Classifier: OpenAI Decisions API or chat
+
+The router has two classifiers behind one switch (**Decisions API?**). Both produce the same classification object, which then goes through the same validator, routing logic and `routing_history`.
+
+| Mode | When | Call |
+|---|---|---|
+| `decisions` | `OPENAI_API_KEY` is set (the default then), or `CLASSIFIER_MODE=decisions` | `POST https://api.openai.com/v1/decisions` with `gpt-6-luna`: one request asking four typed questions (`route` choice, `distress` probability, `language` choice, `amounts` choice) |
+| `chat` | no OpenAI key, or `CLASSIFIER_MODE=chat` | OpenRouter chat completion, temperature 0, JSON mode (the prompt in `prompts.md` §1) |
+
+The Decisions API is OpenAI-only. OpenRouter lists `gpt-6-luna-decisions`, but its Decisions endpoint is an alpha with a different request format, and it rejected API-key requests when this was built (it asked for cookie auth). The Coach brain stays on OpenRouter chat either way.
+
+What Decisions changes:
+- `confidence` is the API's own choice confidence; the full probability distributions are stored in `raw_output`.
+- Wellbeing priority also comes from a separate `distress` probability.
+- The amount values are found in code, and the model says which one is sales and which is expenses.
+- `reason` is built from the answers, because the API returns no free text.
+
+`prompts.md` §1b has the exact questions.
+
 ## How a message flows (router, node by node)
 
 1. **Telegram Trigger** receives the update, checks the secret header, and acknowledges straight away.
@@ -119,8 +138,8 @@ The script computes the `X-Telegram-Bot-Api-Secret-Token` header that the Telegr
 4. **Save Inbound** runs `INSERT … ON CONFLICT (telegram_update_id) DO NOTHING RETURNING id`. **Is New?**: if no id came back, it's a Telegram retry and the run stops there, with no second classification or reply.
 5. **Is Text?**: stickers, photos and edited messages are set to `ignored` and get a "text only for now" reply.
 6. **Load Context** loads the profile, the open session and the last 15 `messages` rows in one query.
-7. **Build Classifier Request → LLM Classify** makes one call at temperature 0 in JSON mode, with 3 tries and a 20 s timeout. The error output leads to the error branch.
-8. **Validate Classification** checks the schema and turns amounts into integers. **Valid?** If not: **Build Repair Request → LLM Repair → Validate Repair**. If it's still invalid: the Coach brain with `status = 'fallback'`.
+7. **Build Classifier Request → Decisions API?** picks the classifier. **Decisions Classify** (OpenAI Decisions API) or **LLM Classify** (chat, temperature 0, JSON mode): 3 tries and a 20 s timeout. The error output leads to the error branch.
+8. **Validate Decision** / **Validate Classification** builds the classification object, checks the schema and turns amounts into integers. **Valid?** If not: **Build Repair Request → Decisions Repair / LLM Repair → Validate Repair**. If it's still invalid: the Coach brain with `status = 'fallback'`.
 9. **Save Routing** writes `routing_history` (route, reason, confidence, raw output, latency, model) and stores the detected language.
 10. **Decide Route** applies the session rules (below). **Which Brain?** then calls one brain with Execute Workflow.
 11. **Brain Result → Apply Session** upserts or deletes the session row. **Build Reply → Send Reply → Mark Processed**. If the Care brain asked for it, **Send Admin Alert** follows.
@@ -136,7 +155,7 @@ The script computes the `X-Telegram-Bot-Api-Secret-Token` header that the Telegr
 
 Edit `src/`, then run `npm run build` and re-import:
 
-1. `src/lib/prompts.js`: add the route definition, its priority, and add it to the OUTPUT enum.
+1. `src/lib/prompts.js`: add the route definition, its priority, and add it to the OUTPUT enum. For the Decisions classifier, add a `{ value: 'complaint', description }` entry to `ROUTE_CHOICES` in `src/lib/decisions.js`.
 2. `src/lib/classifier.js`: add it to `ROUTES`.
 3. `src/lib/route.js`: add `complaint: 'complaint'` to `ROUTE_TO_BRAIN`.
 4. `src/workflows/helpers.js`: add a workflow id. Create `src/workflows/08_brain_complaint.js` by copying the Help brain with a one-line reply.
@@ -148,6 +167,11 @@ To do it directly in the n8n editor instead, edit the same constants inside the 
 ## Known limits
 
 - **I tested against mocks, not the live services.** I ran every workflow in a real n8n with a real Postgres, but with mocked Telegram and LLM endpoints. I haven't run it against Supabase, Telegram and OpenRouter myself, so it needs one pass of the live tests before submission. Anything that depends on the LLM's judgement (Luganda nuance, distress detection, T13 injection) has only been checked by reading the prompt.
+- **The Decisions API is a public beta**, available only from OpenAI with `gpt-6-luna`. With Decisions:
+  - the `reason` is built from the answers, not written by the model;
+  - amount values come from code (`extractAmounts`), so an amount written in an unusual way ("hundred twenty thousand") is missed, and the Numbers brain asks for it again.
+
+  `CLASSIFIER_MODE=chat` switches back to the chat classifier without a redeploy of the workflows.
 - **The Luganda and mixed templates need a native speaker's review.** I wrote them, and Luganda isn't my first language.
 - **"emitwalo ataano"** literally reads as 500,000, but the brief says 50,000. I followed the brief, so the parser and the prompt map it to 50,000.
 - **In a Numbers session, a business question just re-asks for the missing number.** This follows "Session steps, exactly": only `/help` and wellbeing leave the session. The brief's general rule ("unless the youth clearly changes topic") could also be read as letting `business_question` go to the Coach.

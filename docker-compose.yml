@@ -29,6 +29,9 @@ services:
       - LLM_BASE_URL=${LLM_BASE_URL:-https://openrouter.ai/api/v1}
       - LLM_MODEL=${LLM_MODEL:-openai/gpt-4o-mini}
       - LLM_COACH_MODEL=${LLM_COACH_MODEL:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - CLASSIFIER_MODE=${CLASSIFIER_MODE:-}
+      - DECISIONS_MODEL=${DECISIONS_MODEL:-gpt-6-luna}
       - SUPPORT_LINE=${SUPPORT_LINE}
       - ADMIN_CHAT_ID=${ADMIN_CHAT_ID}
       - FORCE_LLM_FAIL=${FORCE_LLM_FAIL:-false}
