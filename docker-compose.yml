@@ -1,0 +1,53 @@
+# Self-hosted n8n for Omulimu. Postgres is Supabase (see schema.sql), so only n8n runs here.
+# Telegram needs a public HTTPS URL: the optional `caddy` service gets a certificate for $DOMAIN.
+#   docker compose up -d                      # n8n only (put your own proxy / tunnel in front)
+#   docker compose --profile https up -d      # n8n + Caddy with automatic HTTPS for $DOMAIN
+
+services:
+  n8n:
+    image: n8nio/n8n:1.123.84
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5678:5678"
+    environment:
+      # n8n
+      - N8N_HOST=${DOMAIN}
+      - N8N_PROTOCOL=https
+      - WEBHOOK_URL=https://${DOMAIN}/
+      - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY}
+      - GENERIC_TIMEZONE=Africa/Kampala
+      - TZ=Africa/Kampala
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
+      - N8N_RUNNERS_ENABLED=true
+      - N8N_DIAGNOSTICS_ENABLED=false
+      - N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=true
+      - EXECUTIONS_DATA_PRUNE=true
+      - EXECUTIONS_DATA_MAX_AGE=336
+      # Omulimu (read by the workflows through $env)
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_API_BASE=${TELEGRAM_API_BASE:-https://api.telegram.org}
+      - LLM_BASE_URL=${LLM_BASE_URL:-https://openrouter.ai/api/v1}
+      - LLM_MODEL=${LLM_MODEL:-openai/gpt-4o-mini}
+      - LLM_COACH_MODEL=${LLM_COACH_MODEL:-}
+      - SUPPORT_LINE=${SUPPORT_LINE}
+      - ADMIN_CHAT_ID=${ADMIN_CHAT_ID}
+      - FORCE_LLM_FAIL=${FORCE_LLM_FAIL:-false}
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./workflows:/import/workflows:ro
+      - ./credentials:/import/credentials:ro
+
+  caddy:
+    image: caddy:2.8.4
+    profiles: ["https"]
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    command: caddy reverse-proxy --from ${DOMAIN} --to n8n:5678
+    volumes:
+      - caddy_data:/data
+
+volumes:
+  n8n_data:
+  caddy_data:

@@ -1,0 +1,90 @@
+{
+  "id": "omulimuHelp00001",
+  "name": "Omulimu 05 · Help Brain",
+  "active": false,
+  "nodes": [
+    {
+      "id": "2c2c4338-f0bf-4013-a4fc-f07109672040",
+      "name": "When Called",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        300
+      ],
+      "parameters": {
+        "inputSource": "passthrough"
+      }
+    },
+    {
+      "id": "8dca36dc-2948-4364-a57d-49b22210e699",
+      "name": "Load Today's Record",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        220,
+        300
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH p AS (SELECT $1::jsonb AS j)\nSELECT\n  (SELECT jsonb_build_object('sales_ugx', r.sales_ugx, 'expenses_ugx', r.expenses_ugx, 'profit_ugx', r.profit_ugx)\n     FROM daily_records r\n     WHERE r.chat_id = (j->>'chat_id')::bigint AND r.record_date = (now() AT TIME ZONE 'Africa/Kampala')::date) AS record,\n  to_char((now() AT TIME ZONE 'Africa/Kampala')::date, 'FMDD Mon') AS date_label\nFROM p",
+        "options": {
+          "queryReplacement": "={{ JSON.stringify($json) }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "omulimuPostgres1",
+          "name": "Omulimu Postgres"
+        }
+      }
+    },
+    {
+      "id": "f64fb55a-5c98-4352-a6b2-bda59d47899e",
+      "name": "Help Reply",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        300
+      ],
+      "parameters": {
+        "jsCode": "// ---- lib/ugx.js ----\n// UGX amount parsing and formatting. Pure functions, inlined into n8n Code nodes by src/build.js.\n\nconst LUGANDA_DIGITS = {\n  emu: 1, gumu: 1, kumu: 1, limu: 1, omu: 1,\n  bbiri: 2, ebiri: 2, abiri: 2, biri: 2,\n  ssatu: 3, esatu: 3, asatu: 3, satu: 3,\n  nnya: 4, ena: 4, ana: 4,\n  ttaano: 5, etaano: 5, ataano: 5, taano: 5,\n  mukaaga: 6, musanvu: 7, munaana: 8, mwenda: 9, kkumi: 10, ekkumi: 10,\n};\n\n// Luganda money units. \"omutwalo\" is 10,000; plural forms take a count word after them.\nconst LUGANDA_UNITS = [\n  { re: /^(?:omu|e?mi)twalo$/, value: 10000 },\n  { re: /^(?:lu|n)kumi$/, value: 1000 },\n  { re: /^(?:aka|ka|obu|bu)kumi$/, value: 100000 },\n  { re: /^(?:aka|obu)kadde$/, value: 1000000 },\n];\n\nconst SUFFIX = {\n  k: 1e3, thousand: 1e3, thou: 1e3,\n  m: 1e6, mil: 1e6, million: 1e6, millions: 1e6,\n  bn: 1e9, b: 1e9, billion: 1e9,\n};\n\n// Returns a whole-number UGX amount, null for \"no amount\", or NaN when the value can't be read.\nfunction parseUgx(value) {\n  if (value === null || value === undefined) return null;\n  if (typeof value === 'number') {\n    return Number.isFinite(value) && value >= 0 && Number.isInteger(value) ? value : NaN;\n  }\n  if (typeof value !== 'string') return NaN;\n\n  let s = value.toLowerCase().trim();\n  if (s === '' || s === 'null' || s === 'none') return null;\n  s = s\n    .replace(/\\/=|\\/-/g, '')\n    .replace(/\\b(?:ugx|ushs?|shs?|shillings?|sh)\\b\\.?/g, '')\n    .replace(/(\\d),(?=\\d{3}\\b)/g, '$1')\n    .trim();\n\n  const num = s.match(/^(\\d+(?:\\.\\d+)?)\\s*([a-z]+)?$/);\n  if (num) {\n    const base = parseFloat(num[1]);\n    const mult = num[2] ? SUFFIX[num[2]] : 1;\n    if (!mult) return NaN;\n    const amount = Math.round(base * mult * 100) / 100;\n    return Number.isInteger(amount) ? amount : NaN;\n  }\n\n  const words = s.split(/\\s+/);\n  const unit = LUGANDA_UNITS.find((u) => u.re.test(words[0]));\n  if (unit) {\n    if (words.length === 1) return unit.value;\n    if (words.length === 2) {\n      const n = /^\\d+$/.test(words[1]) ? parseInt(words[1], 10) : LUGANDA_DIGITS[words[1]];\n      return n ? unit.value * n : NaN;\n    }\n  }\n  return NaN;\n}\n\nfunction groupThousands(n) {\n  return String(Math.abs(Math.trunc(n))).replace(/\\B(?=(\\d{3})+(?!\\d))/g, ',');\n}\n\nfunction formatUgx(n) {\n  return 'UGX ' + groupThousands(n);\n}\n\n// \"profit UGX 75,000\" or \"loss UGX 5,000\"\nfunction formatProfit(profit) {\n  return (profit < 0 ? 'loss ' : 'profit ') + formatUgx(profit);\n}\n\n// ---- lib/numbers.js ----\n// Numbers brain: deterministic, no LLM. Depends on ugx.js.\n\nconst ASK = {\n  ask_sales: 'How much did you sell today, in UGX? For example: 50k.',\n  ask_expenses: 'How much did you spend on the business today, in UGX? For example: 20k.',\n};\n\nfunction nudgeText(firstName) {\n  return `Hi ${firstName || 'there'}, time for today's numbers. How much did you sell today, in UGX?`;\n}\n\nfunction recordText(sales, expenses) {\n  return `Today: sales ${formatUgx(sales)}, expenses ${formatUgx(expenses)}, ${formatProfit(sales - expenses)}.`;\n}\n\n// dateLabel like \"7 Oct\" (formatted in SQL from the Kampala date)\nfunction todayText(dateLabel, rec) {\n  return `Today, ${dateLabel}: sales ${formatUgx(rec.sales_ugx)} · expenses ${formatUgx(rec.expenses_ugx)} · ${formatProfit(rec.profit_ugx)}`;\n}\n\n// action: 'start' (button / nudge), 'new' (daily_numbers without a session), 'continue' (session open)\n// Returns {record, reply_text, session_update}. record is set when both amounts are known.\nfunction numbersStep({ action, session, entities }) {\n  if (action === 'start') {\n    return { record: null, reply_text: ASK.ask_sales, session_update: { op: 'upsert', active_brain: 'numbers', step: 'ask_sales', context: {} } };\n  }\n\n  const open = session && session.active_brain === 'numbers' ? session : null;\n  const ctx = Object.assign({}, (open && open.context) || {});\n  const e = entities || {};\n  const isAmount = (v) => typeof v === 'number' && Number.isInteger(v) && v >= 0;\n\n  if (isAmount(e.sales_ugx)) ctx.sales_ugx = e.sales_ugx;\n  if (isAmount(e.expenses_ugx)) ctx.expenses_ugx = e.expenses_ugx;\n  if (!isAmount(e.sales_ugx) && !isAmount(e.expenses_ugx) && isAmount(e.amount_ugx)) {\n    // An amount with no label counts as the one the current step asks for.\n    const target = open && open.step === 'ask_expenses' ? 'expenses_ugx'\n      : ctx.sales_ugx === undefined ? 'sales_ugx' : 'expenses_ugx';\n    ctx[target] = e.amount_ugx;\n  }\n\n  if (ctx.sales_ugx !== undefined && ctx.expenses_ugx !== undefined) {\n    const record = { sales_ugx: ctx.sales_ugx, expenses_ugx: ctx.expenses_ugx, profit_ugx: ctx.sales_ugx - ctx.expenses_ugx };\n    return { record, reply_text: recordText(record.sales_ugx, record.expenses_ugx), session_update: { op: 'delete' } };\n  }\n\n  const step = ctx.sales_ugx === undefined ? 'ask_sales' : 'ask_expenses';\n  return { record: null, reply_text: ASK[step], session_update: { op: 'upsert', active_brain: 'numbers', step, context: ctx } };\n}\n\n// ---- lib/templates.js ----\n// Fixed reply texts in English (en), Luganda (lg) and mixed. Every one stays within 60 words.\n// {first_name} and {support_line} are filled by fill().\n\nconst TEMPLATES = {\n  help_menu: {\n    en: \"Hi {first_name}! I'm Omulimu, your business coach. I can:\\n1. Record today's sales and expenses and work out your profit\\n2. Answer a question about your business\\n3. Show today's record\\nTap a button below or just type your message.\",\n    lg: \"Ki kati {first_name}! Nze Omulimu, omutendesi wo mu bizinensi. Nsobola:\\n1. Okuwandiika bye watunze ne bye wasaasaanyizza leero, n'okubala amagoba\\n2. Okuddamu ekibuuzo ku bizinensi yo\\n3. Okukulaga ebya leero\\nNyiga eppeesa wansi oba wandiika obubaka bwo.\",\n    mixed: \"Hi {first_name}! Nze Omulimu, your business coach. Nsobola:\\n1. Record today's sales ne expenses, nkubalire profit\\n2. Answer ekibuuzo ku business yo\\n3. Show today's record\\nTap eppeesa wansi oba just type message yo.\",\n  },\n  help_ask: {\n    en: \"Type your business question and I'll answer it.\",\n    lg: 'Wandiika ekibuuzo kyo ku bizinensi, nja kukiddamu.',\n    mixed: \"Type ekibuuzo kyo ku business, I'll answer it.\",\n  },\n  help_how: {\n    en: \"• You can ask any question about your business and Omulimu will help.\\n• You get a reminder at 7pm to share your numbers.\\n• All amounts are in UGX.\\n• Type /help any time to see this menu.\",\n    lg: '• Osobola okubuuza ekibuuzo kyonna ku bizinensi yo, Omulimu n\\'akuyamba.\\n• Ofuna okujjukizibwa ku ssaawa emu ey\\'akawungeezi (7pm) okuwandiika ennamba zo.\\n• Ssente zonna ziri mu UGX.\\n• Wandiika /help essaawa yonna okulaba menu eno.',\n    mixed: \"• Buuza any question ku business yo, Omulimu ajja kukuyamba.\\n• Ofuna reminder at 7pm okuwandiika numbers zo.\\n• Amounts zonna ziri mu UGX.\\n• Type /help any time okulaba menu eno.\",\n  },\n  today_none: {\n    en: 'No record for today yet. Tap below to record today\\'s numbers.',\n    lg: 'Tewannaba kuwandiika bya leero. Nyiga wansi okuwandiika ennamba za leero.',\n    mixed: \"Tewali record ya today yet. Tap wansi to record today's numbers.\",\n  },\n  care_open: {\n    en: \"I'm really sorry you're going through this. You matter more than any business, so let's pause the business talk. Please talk to someone today: call {support_line}. Someone from our team will also check on you. I'm here whenever you want to talk.\",\n    lg: \"Nsonyiwa nnyo olw'ebikutuuseeko. Ggwe okulu okusinga bizinensi yonna, ka tuyimirizeemu eby'emirimu. Nkusaba oyogere n'omuntu leero: kuba ku {support_line}. Omuntu ow'ewaffe naye ajja kukubuuzaako. Ndi wano buli lw'oyagala okwogera.\",\n    mixed: \"Nsonyiwa nnyo, I'm really sorry ku bikutuuseeko. You matter more than any business, ka tupause business talk. Please yogera n'omuntu leero: call {support_line}. Omuntu ow'ewaffe ajja kukubuuzaako. Ndi wano anytime.\",\n  },\n  care_checkin: {\n    en: \"I'm still here with you. How are you feeling right now? There's no rush with the business. If things feel heavy, please call {support_line}. When you're ready to talk business again, just tell me.\",\n    lg: 'Nkyali wano naawe. Owulira otya kaakati? Tewali kwanguyiriza ku bya bizinensi. Ebintu bwe biba bizito, nkusaba okube ku {support_line}. Bw\\'oba weetegese okuddamu okwogera ku bizinensi, ntegeeza bunnyonnyofu.',\n    mixed: \"Nkyali wano with you. Owulira otya right now? No rush ku business. Ebintu bwe biba heavy, please call {support_line}. When you're ready okwogera ku business nate, just tell me.\",\n  },\n  coach_safe: {\n    en: \"Let's grow your business from its own profit. Write down every sale and expense each day, cut one cost this week, and put part of today's profit back into the item that sells fastest. Which item sells fastest for you?\",\n    lg: \"Ka tukuze bizinensi yo okuva mu magoba gaayo. Wandiika buli ky'otunda ne buli ky'osaasaanya buli lunaku, kendeeza ku nsaasaanya emu wiiki eno, era ddiza ku magoba ga leero mu kintu ekitundibwa amangu. Kintu ki ekitundibwa amangu gy'oli?\",\n    mixed: \"Ka tugrow business yo from its own profit. Wandiika buli sale ne expense daily, cut one cost this week, era put part ya today's profit mu item etundibwa fastest. Item ki etundibwa fastest gy'oli?\",\n  },\n  fallback: {\n    en: 'Nsonyiwa, waliwo ekizibu katono. Gezaako nate mu dakiika emu. / Sorry, something went wrong — try again in a minute.',\n  },\n  text_only: {\n    en: 'Nsonyiwa, nsobola okusoma obubaka obw\\'ebigambo bwokka kati. / Sorry, text only for now — please type your message.',\n  },\n  undo_done: {\n    en: \"Today's record has been removed. Send your numbers again any time.\",\n    lg: \"Ebya leero bigiddwawo. Weereza ennamba zo nate essaawa yonna.\",\n    mixed: \"Today's record egiddwawo. Send numbers zo nate any time.\",\n  },\n  undo_none: {\n    en: 'There is no record for today to remove.',\n    lg: 'Tewali bya leero bya kuggyawo.',\n    mixed: 'Tewali record ya today to remove.',\n  },\n};\n\nconst HELP_BUTTONS = [\n  { text: \"Record today's numbers\", data: 'record' },\n  { text: 'Ask a business question', data: 'ask' },\n  { text: \"Today's record\", data: 'today' },\n  { text: 'How Omulimu works', data: 'how' },\n];\n\nfunction fill(template, vars) {\n  return template.replace(/\\{(\\w+)\\}/g, (m, k) => (vars && vars[k] !== undefined && vars[k] !== null ? String(vars[k]) : m));\n}\n\nfunction t(key, language, vars) {\n  const set = TEMPLATES[key];\n  const text = set[language] || set.en;\n  return fill(text, Object.assign({ first_name: 'there' }, vars || {}));\n}\n\n// ---- node logic ----\nconst i = $('When Called').first().json;\nconst row = $input.first().json;\nconst profile = i.profile || {};\nconst lang = profile.language || 'en';\nconst vars = { first_name: profile.first_name };\nconst record = row.record ? {\n  sales_ugx: Number(row.record.sales_ugx), expenses_ugx: Number(row.record.expenses_ugx), profit_ugx: Number(row.record.profit_ugx),\n} : null;\n\nlet reply_text;\nlet buttons = [];\nswitch (i.action) {\n  case 'ask':\n    reply_text = t('help_ask', lang, vars);\n    break;\n  case 'how':\n    reply_text = t('help_how', lang, vars);\n    break;\n  case 'today':\n    if (record) {\n      reply_text = todayText(row.date_label, record);\n    } else {\n      reply_text = t('today_none', lang, vars);\n      buttons = [HELP_BUTTONS[0]];\n    }\n    break;\n  default:\n    reply_text = t('help_menu', lang, vars);\n    buttons = HELP_BUTTONS;\n}\nreturn [{ json: { reply_text, buttons, session_update: { op: 'none' } } }];\n"
+      }
+    }
+  ],
+  "connections": {
+    "When Called": {
+      "main": [
+        [
+          {
+            "node": "Load Today's Record",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Today's Record": {
+      "main": [
+        [
+          {
+            "node": "Help Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Africa/Kampala",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all"
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}

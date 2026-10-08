@@ -1,0 +1,13 @@
+{
+  "name": "omulimu-n8n",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Omulimu: Telegram coaching bot for Ugandan youth entrepreneurs, built in n8n",
+  "scripts": {
+    "build": "node src/build.js",
+    "check": "node src/build.js --check",
+    "test": "node --test tests/unit/*.test.js && node src/build.js --check",
+    "e2e:local": "node tests/e2e/local-suite.js"
+  },
+  "engines": { "node": ">=20" }
+}

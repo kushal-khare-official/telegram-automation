@@ -1,0 +1,130 @@
+{
+  "id": "omulimuErrorAlrt",
+  "name": "Omulimu 07 · Error Alert",
+  "active": false,
+  "nodes": [
+    {
+      "id": "664292de-215b-43c8-a393-6e44af4fc067",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        300
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "ee4f0a97-9639-4f40-a4f3-07824f13a747",
+      "name": "Format Alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        300
+      ],
+      "parameters": {
+        "jsCode": "const e = $input.first().json;\nconst ex = e.execution || {};\nconst lines = [\n  '🚨 Omulimu unhandled error',\n  'Workflow: ' + ((e.workflow && e.workflow.name) || 'unknown'),\n  'Node: ' + (ex.lastNodeExecuted || (e.trigger && e.trigger.node && e.trigger.node.name) || 'unknown'),\n  'Error: ' + String((ex.error && ex.error.message) || (e.trigger && e.trigger.error && e.trigger.error.message) || 'unknown').slice(0, 600),\n  'Execution: ' + (ex.url || ex.id || 'n/a'),\n];\nreturn [{ json: { audience: 'admin', chat_id: $env.ADMIN_CHAT_ID, text: lines.join('\\n'), kind: 'normal' } }];\n"
+      }
+    },
+    {
+      "id": "56556278-9b63-463b-ae8a-9e75da0fe177",
+      "name": "Send Admin Alert",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        440,
+        300
+      ],
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "omulimuSendRepl1",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "mode": "each",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "90d19555-8b61-419d-a3e9-b18d4590f307",
+      "name": "Direct Admin Alert (DB down)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        420
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ ($env.TELEGRAM_API_BASE || 'https://api.telegram.org') + '/bot' + $env.TELEGRAM_BOT_TOKEN + '/sendMessage' }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ chat_id: $env.ADMIN_CHAT_ID, text: $('Format Alert').first().json.text + '\\n(Send Reply failed too: database may be down)' }) }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    }
+  ],
+  "connections": {
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Format Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Alert": {
+      "main": [
+        [
+          {
+            "node": "Send Admin Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Admin Alert": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Direct Admin Alert (DB down)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Africa/Kampala",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all"
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}
