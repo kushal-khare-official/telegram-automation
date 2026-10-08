@@ -12,7 +12,7 @@ function clip(text, max) {
 }
 
 // history: rows {direction, text} oldest first. The last "in" row is the message being classified.
-function buildClassifierUserContent({ text, history, profile, session }) {
+function buildClassifierUserContent({ text, history, profile, session, closing = 'Return only the JSON object.' }) {
   const lines = (history || []).map(
     (r) => `[${r.direction === 'out' ? 'bot' : 'youth'}] ${clip(r.text, HISTORY_ROW_CHARS).replace(/\s+/g, ' ')}`
   );
@@ -29,8 +29,8 @@ function buildClassifierUserContent({ text, history, profile, session }) {
     '<user_message>',
     clip(text, MAX_LLM_TEXT).replace(/<\/?user_message>/gi, ''),
     '</user_message>',
-    'Return only the JSON object.',
-  ].join('\n');
+    closing,
+  ].filter((l) => l !== null).join('\n');
 }
 
 function extractJsonText(raw) {

@@ -18,6 +18,7 @@ const WF = {
 const CRED = {
   postgres: { postgres: { id: 'omulimuPostgres1', name: 'Omulimu Postgres' } },
   llm: { httpHeaderAuth: { id: 'omulimuLlmKey001', name: 'Omulimu LLM key' } },
+  openai: { httpHeaderAuth: { id: 'omulimuOpenAiKy1', name: 'Omulimu OpenAI key' } },
   telegram: { telegramApi: { id: 'omulimuTelegram1', name: 'Omulimu Telegram bot' } },
 };
 
@@ -80,22 +81,23 @@ function pg(name, position, query, paramsExpr, extra = {}) {
   };
 }
 
-function llmHttp(name, position, notes) {
+// opts: { url, body, cred, title } to point the same retry/timeout/error-output setup at another API.
+function llmHttp(name, position, notes, opts = {}) {
+  const title = opts.title !== false; // X-Title is an OpenRouter header
   return {
     name, type: 'n8n-nodes-base.httpRequest', typeVersion: 4.2, position,
     parameters: {
       method: 'POST',
-      url: '={{ $json.llm_url }}',
+      url: opts.url || '={{ $json.llm_url }}',
       authentication: 'genericCredentialType',
       genericAuthType: 'httpHeaderAuth',
-      sendHeaders: true,
-      headerParameters: { parameters: [{ name: 'X-Title', value: 'Omulimu' }] },
+      ...(title ? { sendHeaders: true, headerParameters: { parameters: [{ name: 'X-Title', value: 'Omulimu' }] } } : {}),
       sendBody: true,
       specifyBody: 'json',
-      jsonBody: '={{ JSON.stringify($json.llm_request) }}',
+      jsonBody: opts.body || '={{ JSON.stringify($json.llm_request) }}',
       options: { timeout: LLM_TIMEOUT_MS },
     },
-    credentials: CRED.llm,
+    credentials: opts.cred || CRED.llm,
     ...LLM_RETRY,
     onError: 'continueErrorOutput',
     ...(notes ? { notes, notesInFlow: true } : {}),

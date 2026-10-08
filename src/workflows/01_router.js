@@ -1,6 +1,6 @@
 // 01 Router: Telegram Trigger → save (idempotent) → classify → decide → brain → Send Reply.
 
-const { workflow, code, pg, llmHttp, ifNode, switchNode, callWorkflow, uuid, DB_RETRY } = require('./helpers');
+const { workflow, code, pg, llmHttp, ifNode, switchNode, callWorkflow, uuid, DB_RETRY, CRED } = require('./helpers');
 
 module.exports = workflow('router', 'Omulimu 01 · Router', ({ add, link }) => {
   add({
@@ -115,25 +115,43 @@ SELECT
   add(code('Build Classifier Request', [1540, 300], `
 const n = $('Normalize Update').first().json;
 const ctx = $input.first().json;
+// Which classifier: OpenAI Decisions API when an OpenAI key is configured (or CLASSIFIER_MODE=decisions),
+// otherwise the chat-completions classifier on OpenRouter. Both produce the same classification object.
+const mode = String($env.CLASSIFIER_MODE || ($env.OPENAI_API_KEY ? 'decisions' : 'chat')).toLowerCase() === 'decisions' ? 'decisions' : 'chat';
 // Test switch for R5/T7: env FORCE_LLM_FAIL=true or a message starting with /fail_llm.
 const forceFail = String($env.FORCE_LLM_FAIL || '').toLowerCase() === 'true' || /^\\/fail_llm\\b/i.test(n.text || '');
+const input = { text: n.text, history: ctx.history, profile: ctx.profile || {}, session: ctx.session };
+
 const base = String($env.LLM_BASE_URL || 'https://openrouter.ai/api/v1').replace(/\\/+$/, '');
-const model = $env.LLM_MODEL || 'openai/gpt-4o-mini';
+const chatModel = $env.LLM_MODEL || 'openai/gpt-4o-mini';
 const messages = [
   { role: 'system', content: CLASSIFIER_SYSTEM },
-  { role: 'user', content: buildClassifierUserContent({ text: n.text, history: ctx.history, profile: ctx.profile || {}, session: ctx.session }) },
+  { role: 'user', content: buildClassifierUserContent(input) },
 ];
+
+const openaiBase = String($env.OPENAI_BASE_URL || 'https://api.openai.com/v1').replace(/\\/+$/, '');
+const decisionsModel = $env.DECISIONS_MODEL || 'gpt-6-luna';
+
 return [{ json: {
+  mode,
   llm_url: forceFail ? base + '/__force_fail' : base + '/chat/completions',
-  llm_request: { model, temperature: 0, max_tokens: 300, response_format: { type: 'json_object' }, messages },
-  model,
+  llm_request: { model: chatModel, temperature: 0, max_tokens: 300, response_format: { type: 'json_object' }, messages },
+  decisions_url: forceFail ? openaiBase + '/__force_fail' : openaiBase + '/decisions',
+  decisions_request: buildDecisionsRequest(Object.assign({ model: decisionsModel }, input)),
+  model: mode === 'decisions' ? decisionsModel : chatModel,
   started_at: Date.now(),
 } }];
-`, ['classifier', 'prompts']));
+`, ['ugx', 'classifier', 'decisions', 'prompts']));
 
-  add(llmHttp('LLM Classify', [1760, 300], 'temperature 0 · 3 tries · 20 s timeout · error output → error branch'));
+  add(ifNode('Decisions API?', [1650, 300], "$json.mode === 'decisions'"));
 
-  add(code('Validate Classification', [1980, 200], `
+  add(llmHttp('LLM Classify', [1760, 420], 'chat classifier · temperature 0 · 3 tries · 20 s timeout · error output → error branch'));
+
+  add(llmHttp('Decisions Classify', [1760, 160], 'OpenAI Decisions API · 3 tries · 20 s timeout · error output → error branch', {
+    url: '={{ $json.decisions_url }}', body: '={{ JSON.stringify($json.decisions_request) }}', cred: CRED.openai, title: false,
+  }));
+
+  add(code('Validate Classification', [1980, 420], `
 const res = $input.first().json;
 const req = $('Build Classifier Request').first().json;
 const raw = completionText(res);
@@ -149,32 +167,70 @@ return [{ json: {
 } }];
 `, ['ugx', 'classifier']));
 
-  add(ifNode('Valid?', [2200, 200], '$json.valid'));
+  add(code('Validate Decision', [1980, 160], `
+const res = $input.first().json;
+const req = $('Build Classifier Request').first().json;
+const n = $('Normalize Update').first().json;
+// Typed answers → the same classification object the chat classifier returns, then the same validator.
+const d = decisionsToClassification(res, clip(n.text, MAX_LLM_TEXT));
+const v = d.ok ? validateClassification(JSON.stringify(d.value)) : { ok: false, errors: d.errors, value: null };
+return [{ json: {
+  valid: v.ok,
+  errors: v.errors,
+  classification: v.value,
+  status: 'ok',
+  raw_output: JSON.stringify(res).slice(0, 8000),
+  model: res.model || req.model,
+  latency_ms: Date.now() - req.started_at,
+} }];
+`, ['ugx', 'classifier', 'decisions']));
 
-  add(code('Build Repair Request', [2420, 380], `
+  add(ifNode('Valid?', [2200, 300], '$json.valid'));
+
+  add(code('Build Repair Request', [2420, 420], `
 const req = $('Build Classifier Request').first().json;
 const v = $input.first().json;
+// Chat: send the bad output back with the validation errors. Decisions: answers are typed, so the
+// repair is one fresh attempt with the same questions (it only fails on a refusal or a missing answer).
 const messages = req.llm_request.messages.concat([
   { role: 'assistant', content: String(v.raw_output).slice(0, 2000) },
   { role: 'user', content: repairInstruction(v.errors) },
 ]);
 return [{ json: {
+  mode: req.mode,
   llm_url: req.llm_url,
   llm_request: Object.assign({}, req.llm_request, { messages }),
+  decisions_url: req.decisions_url,
+  decisions_request: req.decisions_request,
   first_raw: v.raw_output,
   first_errors: v.errors,
 } }];
 `, ['prompts']));
 
-  add(llmHttp('LLM Repair', [2640, 380], 'one repair retry · same retry/timeout settings'));
+  add(ifNode('Repair With Decisions?', [2530, 420], "$json.mode === 'decisions'"));
 
-  add(code('Validate Repair', [2860, 300], `
+  add(llmHttp('LLM Repair', [2640, 520], 'one repair retry · same retry/timeout settings'));
+
+  add(llmHttp('Decisions Repair', [2640, 340], 'one repair retry · same retry/timeout settings', {
+    url: '={{ $json.decisions_url }}', body: '={{ JSON.stringify($json.decisions_request) }}', cred: CRED.openai, title: false,
+  }));
+
+  add(code('Validate Repair', [2860, 420], `
 const res = $input.first().json;
 const req = $('Build Classifier Request').first().json;
 const first = $('Build Repair Request').first().json;
 const ctx = $('Load Context').first().json;
-const raw = completionText(res);
-const v = validateClassification(raw);
+const n = $('Normalize Update').first().json;
+let v;
+let raw;
+if (Array.isArray(res.answers)) {
+  raw = JSON.stringify(res).slice(0, 8000);
+  const d = decisionsToClassification(res, clip(n.text, MAX_LLM_TEXT));
+  v = d.ok ? validateClassification(JSON.stringify(d.value)) : { ok: false, errors: d.errors, value: null };
+} else {
+  raw = completionText(res);
+  v = validateClassification(raw);
+}
 // Still invalid after one repair: fall back to the Coach brain and log status = 'fallback'.
 const fallback = {
   route: 'business_question',
@@ -191,7 +247,7 @@ return [{ json: {
   model: res.model || req.model,
   latency_ms: Date.now() - req.started_at,
 } }];
-`, ['ugx', 'classifier']));
+`, ['ugx', 'classifier', 'decisions']));
 
   add(pg('Save Routing', [3080, 200], `
 WITH p AS (SELECT $1::jsonb AS j),
@@ -321,7 +377,7 @@ return [{ json: { audience: 'admin', chat_id: $env.ADMIN_CHAT_ID, text: a, kind:
 const n = $('Normalize Update').first().json;
 const e = $input.first().json;
 let node = e.error_node;
-if (!node) node = $('LLM Repair').isExecuted ? 'LLM Repair' : 'LLM Classify';
+if (!node) node = ['Decisions Repair', 'LLM Repair', 'Decisions Classify', 'LLM Classify'].find((x) => $(x).isExecuted) || 'LLM Classify';
 const err = e.error_message || (e.error && (e.error.message || e.error)) || e.message || JSON.stringify(e).slice(0, 500);
 return [{ json: {
   chat_id: n.chat_id,
@@ -361,13 +417,22 @@ RETURNING id, status
   link('Mark Ignored', 'Build Text-Only Reply');
   link('Build Text-Only Reply', 'Send Text-Only Reply');
   link('Load Context', 'Build Classifier Request');
-  link('Build Classifier Request', 'LLM Classify');
+  link('Build Classifier Request', 'Decisions API?');
+  link('Decisions API?', 'Decisions Classify', 0);
+  link('Decisions API?', 'LLM Classify', 1);
+  link('Decisions Classify', 'Validate Decision', 0);
+  link('Decisions Classify', 'Build Fallback', 1);
   link('LLM Classify', 'Validate Classification', 0);
   link('LLM Classify', 'Build Fallback', 1);
+  link('Validate Decision', 'Valid?');
   link('Validate Classification', 'Valid?');
   link('Valid?', 'Save Routing', 0);
   link('Valid?', 'Build Repair Request', 1);
-  link('Build Repair Request', 'LLM Repair');
+  link('Build Repair Request', 'Repair With Decisions?');
+  link('Repair With Decisions?', 'Decisions Repair', 0);
+  link('Repair With Decisions?', 'LLM Repair', 1);
+  link('Decisions Repair', 'Validate Repair', 0);
+  link('Decisions Repair', 'Build Fallback', 1);
   link('LLM Repair', 'Validate Repair', 0);
   link('LLM Repair', 'Build Fallback', 1);
   link('Validate Repair', 'Save Routing');

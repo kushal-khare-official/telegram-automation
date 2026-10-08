@@ -4,6 +4,7 @@
 //
 //   Telegram: /bot<token>/<method>     (setWebhook, deleteWebhook, getMe, sendMessage, answerCallbackQuery)
 //   LLM:      /v1/chat/completions     (rule-based fake classifier + fake coach)
+//             /v1/decisions            (fake OpenAI Decisions API: same rules, typed answers)
 //             /v1/__force_fail         (always 500, used by FORCE_LLM_FAIL and /fail_llm)
 //   Control:  GET /__sent  GET /__llm  POST /__reset
 //
@@ -83,6 +84,32 @@ function handleLlm(req, res, body) {
   return json(res, 200, completion('Sell near the boda stage at lunch time and keep a daily notebook of sales. Which day sells best for you?', body.model));
 }
 
+// Fake OpenAI Decisions API: answers the 4 classifier questions from the same keyword rules.
+const decisionAttempts = new Map();
+function handleDecisions(req, res, body) {
+  const text = ((String(body.input || '').match(/<user_message>\n([\s\S]*?)\n<\/user_message>/) || [])[1] || '').trim();
+  const n = (decisionAttempts.get(text) || 0) + 1;
+  decisionAttempts.set(text, n);
+  llmCalls.push({ kind: 'decisions', text, repair: n > 1, at: Date.now() });
+  const c = fakeClassify(text);
+  const choice = (name, value, p = 0.9) => ({ type: 'choice', name, choice: value, confidence: p, probabilities: [{ value, probability: p }] });
+  const e = c.entities;
+  const t = text.toLowerCase();
+  let roles = 'none';
+  if (e.sales_ugx && e.expenses_ugx) roles = t.search(/expenses|spent/) < t.search(/sold|natunze|sales/) ? 'expenses_then_sales' : 'sales_then_expenses';
+  else if (e.sales_ugx) roles = 'sales_only';
+  else if (e.expenses_ugx) roles = 'expenses_only';
+  else if (e.amount_ugx) roles = 'unlabeled';
+  const route = /BADJSON2/.test(text) || (/BADJSON/.test(text) && n === 1)
+    ? { type: 'refusal', name: 'route' }
+    : choice('route', c.route === 'wellbeing' ? 'daily_numbers' : c.route); // distress must win via the predicate
+  return json(res, 200, {
+    id: 'dec_mock', model: body.model || 'gpt-6-luna',
+    answers: [route, { type: 'predicate', name: 'distress', probability: c.route === 'wellbeing' ? 0.88 : 0.03 },
+      choice('language', c.language), choice('amounts', roles)],
+  });
+}
+
 function handleTelegram(method, res, body) {
   if (method === 'sendMessage') {
     if (/RATELIMIT/.test(body.text || '') && !rateLimited.has(body.text)) {
@@ -110,8 +137,9 @@ http.createServer((req, res) => {
     const url = req.url.split('?')[0];
     if (url === '/__sent') return json(res, 200, sent);
     if (url === '/__llm') return json(res, 200, llmCalls);
-    if (url === '/__reset') { sent = []; llmCalls = []; rateLimited.clear(); badJsonSeen.clear(); return json(res, 200, { ok: true }); }
+    if (url === '/__reset') { sent = []; llmCalls = []; rateLimited.clear(); badJsonSeen.clear(); decisionAttempts.clear(); return json(res, 200, { ok: true }); }
     if (url === '/v1/chat/completions') return handleLlm(req, res, body);
+    if (url === '/v1/decisions') return handleDecisions(req, res, body);
     if (url.startsWith('/v1/')) { llmCalls.push({ kind: 'forced_failure', at: Date.now() }); return json(res, 500, { error: { message: 'forced failure' } }); }
     const tg = url.match(/^\/bot[^/]+\/(\w+)$/);
     if (tg) return handleTelegram(tg[1], res, body);

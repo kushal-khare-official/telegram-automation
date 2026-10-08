@@ -122,7 +122,7 @@ const tests = {
     const err = rows('SELECT node, error FROM error_log');
     check('3 attempts at the LLM', calls.length === 3, calls.length);
     check('fallback reply sent', /Nsonyiwa, waliwo ekizibu katono/.test(r.reply), r.reply);
-    check('error_log row', err.length === 1 && err[0].node === 'LLM Classify', err);
+    check('error_log row', err.length === 1 && ['LLM Classify', 'Decisions Classify'].includes(err[0].node), err);
     check("message status 'failed'", r.msg.status === 'failed', r.msg);
   },
   async T8() {
@@ -175,7 +175,7 @@ const tests = {
     check('invalid JSON → one repair → valid', a.route.status === 'repaired' && a.route.route === 'business_question', a.route);
     const b = await say('BADJSON2 something');
     check("invalid twice → Coach fallback, status 'fallback'", b.route.status === 'fallback' && b.msg.status === 'fallback' && !!b.reply, { route: b.route, msg: b.msg });
-    const calls = (await mock('/__llm')).filter((c) => c.kind === 'classifier' && /BADJSON2/.test(c.text));
+    const calls = (await mock('/__llm')).filter((c) => ['classifier', 'decisions'].includes(c.kind) && /BADJSON2/.test(c.text));
     check('exactly one repair call', calls.length === 2, calls.length);
   },
   async T14() {
@@ -235,6 +235,12 @@ const tests = {
 
 (async () => {
   const only = process.argv.slice(2);
+  await reset();
+  post('/help');
+  await sleep(100);
+  const probe = await settle(updateId);
+  const kinds = [...new Set((await mock('/__llm')).map((c) => c.kind))];
+  console.log(`classifier in use: ${kinds.join(', ') || 'none'} (probe ${probe})`);
   for (const [name, fn] of Object.entries(tests)) {
     if (only.length && !only.some((o) => name.startsWith(o))) continue;
     console.log(name);
